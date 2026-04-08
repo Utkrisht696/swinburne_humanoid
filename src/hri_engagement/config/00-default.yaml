@@ -1,9 +1,9 @@
 hri_engagement:
   ros__parameters:
     reference_frame: "rgb_head_center" # Reference frame used to compute mutual gaze. Match this to the camera frame available in your TF tree.
-    max_distance: 2.0 # meters. people further away than `max_distance` are automatically set to be DISENGAGED
-    field_of_view: 120.0 # degrees. Half-field of 'attention' of both the humans and the robot. If eg the robot is outside of the field of attention of the human, this human will be considered as dis-engaged, as it does not look at the robot.
-    engagement_threshold: 0.7 # used to decide 'when' a person is considered as engaging (or disengaging). Increase this value to make it 'harder' for the robot to consider someone as 'engaging', decrease it for the opposite effect.
-    observation_window: 10.0 # seconds. The time window used to compute the engagement level of a person. The higher the value, the more stable the engagement level will be.
+    reference_frame_is_optical: true # rgb_head_center behaves like an optical camera frame (+Z forward), so engagement must interpret it accordingly.
+    max_distance: 2.5 # meters. people further away than `max_distance` are automatically set to be DISENGAGED
+    field_of_view: 90.0 # degrees. Mutual-gaze cone; avoid 360 here because the engagement math uses tan(FOV).
+    engagement_threshold: 0.5 # used to decide 'when' a person is considered as engaging (or disengaging). Increase this value to make it 'harder' for the robot to consider someone as 'engaging', decrease it for the opposite effect.
+    observation_window: 5.0 # seconds. The time window used to compute the engagement level of a person. The higher the value, the more stable the engagement level will be.
     rate: 10.0 # Hz. The rate at which the engagement level is computed and published.
-

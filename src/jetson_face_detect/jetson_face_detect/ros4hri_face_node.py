@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -8,6 +9,7 @@ import numpy as np
 import rclpy
 import tf_transformations
 from cv_bridge import CvBridge
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 from tf2_ros import TransformBroadcaster
@@ -16,6 +18,7 @@ from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from hri_msgs.msg import IdsList, NormalizedRegionOfInterest2D, FacialLandmarks
 
+from .compressed_image_decoder import CompressedImageDecoder
 from .scrfd_trt_detector import SCRFDTensorRTDetector
 from .face_tracker import SimpleFaceTracker
 
@@ -63,8 +66,8 @@ class Ros4HriFaceNode(Node):
         self.declare_parameter('publish_min_width', 40)
         self.declare_parameter('publish_min_height', 40)
         self.declare_parameter('publish_min_area', 2500)
-        self.declare_parameter('publish_min_aspect_ratio', 0.45)
-        self.declare_parameter('publish_max_aspect_ratio', 1.8)
+        self.declare_parameter('publish_min_aspect_ratio', 0.65)
+        self.declare_parameter('publish_max_aspect_ratio', 1.45)
         self.declare_parameter('tracker_iou_threshold', 0.35)
         self.declare_parameter('tracker_min_predicted_iou', 0.05)
         self.declare_parameter('tracker_max_center_distance_ratio', 0.9)
@@ -78,6 +81,24 @@ class Ros4HriFaceNode(Node):
         self.declare_parameter('detector_debug', True)
         self.declare_parameter('tf_position_smoothing', 0.25)
         self.declare_parameter('tf_rotation_smoothing', 0.2)
+        self.declare_parameter('detector_max_rate_hz', 8.0)
+        self.declare_parameter('redetect_on_missed', 1)
+        self.declare_parameter('debug_publish_rate_hz', 2.0)
+        self.declare_parameter('publish_face_assets_on_detect_only', True)
+        self.declare_parameter('use_cuda_preprocess', True)
+        self.declare_parameter('use_hw_jpeg_decode', True)
+        self.declare_parameter('filter_non_frontal_faces', True)
+        self.declare_parameter('frontal_max_nose_offset_ratio', 0.40)
+        self.declare_parameter('frontal_max_mouth_offset_ratio', 0.40)
+        self.declare_parameter('frontal_max_eye_y_diff_ratio', 0.12)
+        self.declare_parameter('frontal_min_eye_mouth_ratio', 0.35)
+        self.declare_parameter('frontal_max_eye_mouth_ratio', 1.35)
+        self.declare_parameter('filter_low_quality_identification_faces', True)
+        self.declare_parameter('identification_require_detector_confirmation', True)
+        self.declare_parameter('id_quality_min_face_stddev', 18.0)
+        self.declare_parameter('id_quality_min_patch_stddev', 10.0)
+        self.declare_parameter('id_quality_min_patch_laplacian_var', 45.0)
+        self.declare_parameter('id_quality_min_pass_ratio', 0.75)
 
         self.image_topic = self.get_parameter('image_topic').value
         self.camera_info_topic = self.get_parameter('camera_info_topic').value
@@ -111,6 +132,48 @@ class Ros4HriFaceNode(Node):
         self.detector_debug = bool(self.get_parameter('detector_debug').value)
         self.tf_position_smoothing = float(self.get_parameter('tf_position_smoothing').value)
         self.tf_rotation_smoothing = float(self.get_parameter('tf_rotation_smoothing').value)
+        self.detector_max_rate_hz = float(self.get_parameter('detector_max_rate_hz').value)
+        self.redetect_on_missed = int(self.get_parameter('redetect_on_missed').value)
+        self.debug_publish_rate_hz = float(self.get_parameter('debug_publish_rate_hz').value)
+        self.publish_face_assets_on_detect_only = bool(
+            self.get_parameter('publish_face_assets_on_detect_only').value
+        )
+        self.use_cuda_preprocess = bool(self.get_parameter('use_cuda_preprocess').value)
+        self.use_hw_jpeg_decode = bool(self.get_parameter('use_hw_jpeg_decode').value)
+        self.filter_non_frontal_faces = bool(self.get_parameter('filter_non_frontal_faces').value)
+        self.frontal_max_nose_offset_ratio = float(
+            self.get_parameter('frontal_max_nose_offset_ratio').value
+        )
+        self.frontal_max_mouth_offset_ratio = float(
+            self.get_parameter('frontal_max_mouth_offset_ratio').value
+        )
+        self.frontal_max_eye_y_diff_ratio = float(
+            self.get_parameter('frontal_max_eye_y_diff_ratio').value
+        )
+        self.frontal_min_eye_mouth_ratio = float(
+            self.get_parameter('frontal_min_eye_mouth_ratio').value
+        )
+        self.frontal_max_eye_mouth_ratio = float(
+            self.get_parameter('frontal_max_eye_mouth_ratio').value
+        )
+        self.filter_low_quality_identification_faces = bool(
+            self.get_parameter('filter_low_quality_identification_faces').value
+        )
+        self.identification_require_detector_confirmation = bool(
+            self.get_parameter('identification_require_detector_confirmation').value
+        )
+        self.id_quality_min_face_stddev = float(
+            self.get_parameter('id_quality_min_face_stddev').value
+        )
+        self.id_quality_min_patch_stddev = float(
+            self.get_parameter('id_quality_min_patch_stddev').value
+        )
+        self.id_quality_min_patch_laplacian_var = float(
+            self.get_parameter('id_quality_min_patch_laplacian_var').value
+        )
+        self.id_quality_min_pass_ratio = float(
+            self.get_parameter('id_quality_min_pass_ratio').value
+        )
 
         self.bridge = CvBridge()
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -129,14 +192,31 @@ class Ros4HriFaceNode(Node):
         )
         self.face_model_scale_m = 0.001
         self.face_width_m = 0.16
-        self.face_rotation_correction = tf_transformations.quaternion_from_euler(np.pi, 0.0, 0.0)
-        # Match the ROS4HRI reference face detector's gaze frame convention.
-        # hri_engagement expects the gaze frame to use an optical-frame layout
-        # where +Z points along the person's viewing direction.
-        self.gaze_frame_rotation = tf_transformations.quaternion_from_euler(
+        # Remap the SCRFD/PnP model axes to the ROS4HRI face frame:
+        # +X points out of the face towards the camera, +Y points to the
+        # person's left, and +Z points up.
+        face_rotation_matrix = np.eye(4, dtype=np.float64)
+        face_rotation_matrix[:3, :3] = np.array(
+            [
+                [0.0, 0.0, -1.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        self.face_rotation_correction = tf_transformations.quaternion_from_matrix(
+            face_rotation_matrix
+        )
+        # Keep the gaze frame in the same world orientation it had before the
+        # face-frame fix, while rotating the face frame so +X faces the camera.
+        old_face_rotation_correction = tf_transformations.quaternion_from_euler(
+            np.pi,
             0.0,
             0.0,
-            0.0,
+        )
+        self.gaze_frame_rotation = tf_transformations.quaternion_multiply(
+            tf_transformations.quaternion_inverse(self.face_rotation_correction),
+            old_face_rotation_correction,
         )
         self.warned_missing_camera_info = False
         self.warned_pose_estimation_failed = False
@@ -152,7 +232,9 @@ class Ros4HriFaceNode(Node):
             input_size=(640, 640),
             apply_sigmoid=self.apply_sigmoid,
             debug=self.detector_debug,
+            use_cuda_preprocess=self.use_cuda_preprocess,
         )
+        self.decoder = CompressedImageDecoder(prefer_hw=self.use_hw_jpeg_decode)
         self.tracker = SimpleFaceTracker(
             iou_threshold=self.tracker_iou_threshold,
             min_predicted_iou=self.tracker_min_predicted_iou,
@@ -163,12 +245,25 @@ class Ros4HriFaceNode(Node):
         )
 
         self.ros_face_id_map: Dict[int, str] = {}
+        self.latest_frame_lock = threading.Lock()
+        self.latest_frame_event = threading.Event()
+        self.stop_event = threading.Event()
+        self.latest_msg: Optional[CompressedImage] = None
+        self.received_frames = 0
+        self.dropped_frames = 0
+        self.last_detect_time = 0.0
+        self.last_debug_publish_time = 0.0
+        self.shutdown_started = False
 
         self.sub = self.create_subscription(
             CompressedImage,
             self.image_topic,
             self.image_cb,
-            10
+            QoSProfile(
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            ),
         )
         self.camera_info_sub_sensor = self.create_subscription(
             CameraInfo,
@@ -207,16 +302,38 @@ class Ros4HriFaceNode(Node):
         self.frame_count = 0
         self.last_log_time = time.time()
         self.stage_totals = {
+            'ingest_ms': 0.0,
             'decode_ms': 0.0,
+            'resize_color_ms': 0.0,
+            'tensor_pack_ms': 0.0,
+            'h2d_ms': 0.0,
+            'infer_enqueue_ms': 0.0,
+            'dtoh_sync_ms': 0.0,
             'detect_ms': 0.0,
             'track_ms': 0.0,
             'publish_ms': 0.0,
             'debug_ms': 0.0,
         }
+        self.stage_max = {key: 0.0 for key in self.stage_totals}
+        self.last_stats_time = time.time()
+        self.worker_thread = threading.Thread(
+            target=self.worker_loop,
+            name='jetson_face_detect_worker',
+            daemon=True,
+        )
+        self.worker_thread.start()
 
         self.get_logger().info(f'Subscribed to {self.image_topic}')
         self.get_logger().info(f'Subscribed to {self.camera_info_topic}')
         self.get_logger().info(f'Using SCRFD engine: {self.engine_path}')
+        self.get_logger().info(
+            f'Decode backend: {self.decoder.get_backend_status()} '
+            f'(use_hw_jpeg_decode={self.use_hw_jpeg_decode})'
+        )
+        self.get_logger().info(
+            f'Preprocess backend: {self.detector.get_preprocess_backend_status()} '
+            f'(use_cuda_preprocess={self.use_cuda_preprocess})'
+        )
 
     def load_static_camera_info(self):
         if len(self.camera_matrix_param) == 9:
@@ -249,42 +366,117 @@ class Ros4HriFaceNode(Node):
             self.received_camera_info = True
 
     def image_cb(self, msg: CompressedImage):
-        t0 = time.perf_counter()
-        np_arr = np.frombuffer(msg.data, np.uint8)
-        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        if frame is None:
-            self.get_logger().warning('Failed to decode compressed frame')
+        if self.shutdown_started:
             return
-        t1 = time.perf_counter()
-        self.process_frame(msg.header, frame, decode_ms=(t1 - t0) * 1000.0)
+        ingest_start = time.perf_counter()
+        with self.latest_frame_lock:
+            if self.latest_msg is not None:
+                self.dropped_frames += 1
+            self.latest_msg = msg
+            self.received_frames += 1
+        self.latest_frame_event.set()
+        self.stage_totals['ingest_ms'] += (time.perf_counter() - ingest_start) * 1000.0
+
+    def worker_loop(self):
+        while not self.stop_event.is_set():
+            if not self.latest_frame_event.wait(timeout=0.05):
+                continue
+            with self.latest_frame_lock:
+                msg = self.latest_msg
+                self.latest_msg = None
+                self.latest_frame_event.clear()
+            if msg is None:
+                continue
+            if not self.ros_interfaces_active():
+                break
+
+            t0 = time.perf_counter()
+            decode_result = self.decoder.decode(msg.data)
+            frame = decode_result.frame_bgr
+            if frame is None:
+                if self.ros_interfaces_active():
+                    self.get_logger().warning('Failed to decode compressed frame')
+                continue
+            t1 = time.perf_counter()
+            self.process_frame(msg.header, frame, decode_ms=(t1 - t0) * 1000.0)
+        self.latest_frame_event.clear()
+
+    def ros_interfaces_active(self) -> bool:
+        if self.shutdown_started or self.stop_event.is_set():
+            return False
+        try:
+            return self.context.ok()
+        except (AttributeError, ExternalShutdownException):
+            return False
+        except Exception:
+            return False
+
+    def safe_subscription_count(self, publisher) -> int:
+        if not self.ros_interfaces_active():
+            return 0
+        try:
+            return publisher.get_subscription_count()
+        except Exception:
+            return 0
+
+    def safe_publish(self, publisher, msg) -> bool:
+        if not self.ros_interfaces_active():
+            return False
+        try:
+            publisher.publish(msg)
+            return True
+        except Exception:
+            return False
+
+    def should_run_detector(self) -> bool:
+        if self.detector_max_rate_hz <= 0.0:
+            return True
+        if not self.tracker.tracks:
+            return True
+        now = time.perf_counter()
+        if (now - self.last_detect_time) >= (1.0 / self.detector_max_rate_hz):
+            return True
+        return any(track.missed >= self.redetect_on_missed for track in self.tracker.tracks.values())
+
+    def should_publish_face_assets(self, ran_detector: bool, track_missed: int) -> bool:
+        if not self.publish_face_assets_on_detect_only:
+            return True
+        return ran_detector or track_missed == 0
+
+    def should_publish_debug_frame(self, now: float) -> bool:
+        if not self.publish_debug_image or self.safe_subscription_count(self.pub_debug) <= 0:
+            return False
+        if self.debug_publish_rate_hz <= 0.0:
+            return True
+        min_period = 1.0 / self.debug_publish_rate_hz
+        if (now - self.last_debug_publish_time) < min_period:
+            return False
+        self.last_debug_publish_time = now
+        return True
 
     def process_frame(self, header, frame: np.ndarray, decode_ms: float):
-        t_start_detect = time.perf_counter()
+        if not self.ros_interfaces_active():
+            return
+        frame_start = time.perf_counter()
+        t_start_detect = frame_start
         should_publish_debug = (
-            self.publish_debug_image and self.pub_debug.get_subscription_count() > 0
+            self.should_publish_debug_frame(frame_start)
         )
         debug = None
-
-        detections = self.detector.detect(frame)
+        detector_timings: Dict[str, float] = {}
+        ran_detector = self.should_run_detector()
+        if ran_detector:
+            detections = self.detector.detect(frame, timings=detector_timings)
+            self.last_detect_time = frame_start
+        else:
+            detections = []
         t2 = time.perf_counter()
 
-        if debug is not None:
-            for det in detections[:20]:
-                x1, y1, x2, y2 = det.bbox_xyxy
-                cv2.rectangle(debug, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(
-                    debug,
-                    f"{det.score:.2f}",
-                    (x1, max(20, y1 - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 0, 0),
-                    1,
-                    cv2.LINE_AA
-                )
-
         h, w = frame.shape[:2]
-        tracks = self.tracker.update(detections)
+        if ran_detector:
+            tracks = self.tracker.update(detections)
+        else:
+            tracks = self.tracker.predict_only()
         tracks = tracks[:self.max_faces]
         t3 = time.perf_counter()
 
@@ -312,6 +504,8 @@ class Ros4HriFaceNode(Node):
                 continue
             if area < self.publish_min_area:
                 continue
+            if not self.is_face_frontal(trk.keypoints):
+                continue
 
             ros_face_id = self.get_ros_face_id(trk.track_id)
             ros_face_ids.append(ros_face_id)
@@ -323,26 +517,33 @@ class Ros4HriFaceNode(Node):
                 continue
 
             self.ensure_face_publishers(ros_face_id)
+            if ros_face_id not in self.per_face_roi_pubs:
+                continue
             self.publish_roi(header, ros_face_id, x1, y1, x2, y2, w, h)
 
-            if self.publish_crops:
+            publish_face_assets = self.should_publish_face_assets(ran_detector, trk.missed)
+            identification_assets_ok = (
+                publish_face_assets
+                and self.is_face_identification_quality_ok(frame, crop_box, trk.keypoints, ran_detector)
+            )
+            if self.publish_crops and identification_assets_ok:
                 crop_pub = self.per_face_crop_pubs[ros_face_id]
-                if crop_pub.get_subscription_count() > 0:
+                if self.safe_subscription_count(crop_pub) > 0:
                     crop_img = cv2.resize(crop, (self.crop_size, self.crop_size), interpolation=cv2.INTER_LINEAR)
                     self.publish_image(header, crop_pub, crop_img)
 
-            if self.publish_aligned:
+            if self.publish_aligned and identification_assets_ok:
                 aligned_pub = self.per_face_aligned_pubs[ros_face_id]
-                if aligned_pub.get_subscription_count() > 0:
+                if self.safe_subscription_count(aligned_pub) > 0:
                     if trk.keypoints is not None and trk.keypoints.shape == (5, 2):
                         aligned_img = self.align_face(frame, trk.keypoints, self.crop_size)
                     else:
                         aligned_img = cv2.resize(crop, (self.crop_size, self.crop_size), interpolation=cv2.INTER_LINEAR)
                     self.publish_image(header, aligned_pub, aligned_img)
 
-            if self.publish_landmarks:
+            if self.publish_landmarks and publish_face_assets:
                 landmarks_pub = self.per_face_landmarks_pubs[ros_face_id]
-                if landmarks_pub.get_subscription_count() > 0:
+                if self.safe_subscription_count(landmarks_pub) > 0:
                     self.publish_landmarks_msg(
                         header, ros_face_id, x1, y1, x2, y2, w, h, trk.keypoints, frame
                     )
@@ -368,19 +569,20 @@ class Ros4HriFaceNode(Node):
         if should_publish_debug:
             if debug is None:
                 debug = frame.copy()
-                for det in detections[:20]:
-                    x1, y1, x2, y2 = det.bbox_xyxy
-                    cv2.rectangle(debug, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                    cv2.putText(
-                        debug,
-                        f"{det.score:.2f}",
-                        (x1, max(20, y1 - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (255, 0, 0),
-                        1,
-                        cv2.LINE_AA
-                    )
+                if ran_detector:
+                    for det in detections[:20]:
+                        x1, y1, x2, y2 = det.bbox_xyxy
+                        cv2.rectangle(debug, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        cv2.putText(
+                            debug,
+                            f"{det.score:.2f}",
+                            (x1, max(20, y1 - 5)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (255, 0, 0),
+                            1,
+                            cv2.LINE_AA
+                        )
                 for trk in tracks:
                     x1, y1, x2, y2 = self.clamp_box(trk.bbox_xyxy, w, h)
                     bw = x2 - x1
@@ -395,6 +597,8 @@ class Ros4HriFaceNode(Node):
                         continue
                     if area < self.publish_min_area:
                         continue
+                    if not self.is_face_frontal(trk.keypoints):
+                        continue
                     ros_face_id = self.get_ros_face_id(trk.track_id)
                     self.draw_tracked_debug(debug, ros_face_id, trk.score, (x1, y1, x2, y2), trk.keypoints)
             self.publish_debug(header, debug)
@@ -403,10 +607,16 @@ class Ros4HriFaceNode(Node):
             valid_tracks,
             len(detections),
             decode_ms=decode_ms,
+            resize_color_ms=detector_timings.get('resize_color_ms', 0.0),
+            tensor_pack_ms=detector_timings.get('tensor_pack_ms', 0.0),
+            h2d_ms=detector_timings.get('h2d_ms', 0.0),
+            infer_enqueue_ms=detector_timings.get('infer_enqueue_ms', 0.0),
+            dtoh_sync_ms=detector_timings.get('dtoh_sync_ms', 0.0),
             detect_ms=(t2 - t_start_detect) * 1000.0,
             track_ms=(t3 - t2) * 1000.0,
             publish_ms=(t4 - t3) * 1000.0,
             debug_ms=(t5 - t4) * 1000.0,
+            ran_detector=ran_detector,
         )
 
     def get_ros_face_id(self, track_id: int) -> str:
@@ -415,27 +625,32 @@ class Ros4HriFaceNode(Node):
         return self.ros_face_id_map[track_id]
 
     def ensure_face_publishers(self, face_id: str):
+        if not self.ros_interfaces_active():
+            return
         if face_id not in self.per_face_roi_pubs:
-            self.per_face_roi_pubs[face_id] = self.create_publisher(
-                NormalizedRegionOfInterest2D,
-                f'/humans/faces/{face_id}/roi',
-                10
-            )
-            self.per_face_crop_pubs[face_id] = self.create_publisher(
-                Image,
-                f'/humans/faces/{face_id}/cropped',
-                10
-            )
-            self.per_face_aligned_pubs[face_id] = self.create_publisher(
-                Image,
-                f'/humans/faces/{face_id}/aligned',
-                10
-            )
-            self.per_face_landmarks_pubs[face_id] = self.create_publisher(
-                FacialLandmarks,
-                f'/humans/faces/{face_id}/landmarks',
-                10
-            )
+            try:
+                self.per_face_roi_pubs[face_id] = self.create_publisher(
+                    NormalizedRegionOfInterest2D,
+                    f'/humans/faces/{face_id}/roi',
+                    10
+                )
+                self.per_face_crop_pubs[face_id] = self.create_publisher(
+                    Image,
+                    f'/humans/faces/{face_id}/cropped',
+                    10
+                )
+                self.per_face_aligned_pubs[face_id] = self.create_publisher(
+                    Image,
+                    f'/humans/faces/{face_id}/aligned',
+                    10
+                )
+                self.per_face_landmarks_pubs[face_id] = self.create_publisher(
+                    FacialLandmarks,
+                    f'/humans/faces/{face_id}/landmarks',
+                    10
+                )
+            except Exception:
+                return
 
     def cleanup_stale_faces(self, active_track_ids):
         stale_track_ids = [
@@ -454,7 +669,10 @@ class Ros4HriFaceNode(Node):
             ):
                 publisher = publisher_map.pop(face_id, None)
                 if publisher is not None:
-                    self.destroy_publisher(publisher)
+                    try:
+                        self.destroy_publisher(publisher)
+                    except Exception:
+                        pass
 
     def clamp_box(self, bbox_xyxy: Tuple[int, int, int, int], w: int, h: int):
         x1, y1, x2, y2 = bbox_xyxy
@@ -477,6 +695,115 @@ class Ros4HriFaceNode(Node):
         nx2 = min(w - 1, x2 + pad_x)
         ny2 = min(h - 1, y2 + pad_y_bottom)
         return nx1, ny1, nx2, ny2
+
+    def is_face_frontal(self, keypoints: Optional[np.ndarray]) -> bool:
+        if not self.filter_non_frontal_faces:
+            return True
+        if keypoints is None or keypoints.shape != (5, 2):
+            return False
+
+        left_eye = keypoints[0].astype(np.float32)
+        right_eye = keypoints[1].astype(np.float32)
+        nose = keypoints[2].astype(np.float32)
+        mouth_left = keypoints[3].astype(np.float32)
+        mouth_right = keypoints[4].astype(np.float32)
+
+        eye_mid = 0.5 * (left_eye + right_eye)
+        mouth_mid = 0.5 * (mouth_left + mouth_right)
+        inter_eye = float(np.linalg.norm(right_eye - left_eye))
+        if inter_eye < 4.0:
+            return False
+
+        nose_offset_ratio = abs(float(nose[0] - eye_mid[0])) / inter_eye
+        mouth_offset_ratio = abs(float(mouth_mid[0] - eye_mid[0])) / inter_eye
+        eye_y_diff_ratio = abs(float(left_eye[1] - right_eye[1])) / inter_eye
+        eye_mouth_ratio = float(mouth_mid[1] - eye_mid[1]) / inter_eye
+
+        if nose_offset_ratio > self.frontal_max_nose_offset_ratio:
+            return False
+        if mouth_offset_ratio > self.frontal_max_mouth_offset_ratio:
+            return False
+        if eye_y_diff_ratio > self.frontal_max_eye_y_diff_ratio:
+            return False
+        if eye_mouth_ratio < self.frontal_min_eye_mouth_ratio:
+            return False
+        if eye_mouth_ratio > self.frontal_max_eye_mouth_ratio:
+            return False
+        return True
+
+    def is_face_identification_quality_ok(
+        self,
+        frame: np.ndarray,
+        crop_box: Tuple[int, int, int, int],
+        keypoints: Optional[np.ndarray],
+        ran_detector: bool,
+    ) -> bool:
+        if not self.filter_low_quality_identification_faces:
+            return True
+        if self.identification_require_detector_confirmation and not ran_detector:
+            return False
+        if keypoints is None or keypoints.shape != (5, 2):
+            return False
+
+        x1, y1, x2, y2 = crop_box
+        if x2 <= x1 or y2 <= y1:
+            return False
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return False
+
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        if float(np.std(gray)) < self.id_quality_min_face_stddev:
+            return False
+
+        left_eye = keypoints[0].astype(np.float32)
+        right_eye = keypoints[1].astype(np.float32)
+        nose = keypoints[2].astype(np.float32)
+        mouth_left = keypoints[3].astype(np.float32)
+        mouth_right = keypoints[4].astype(np.float32)
+        mouth_mid = 0.5 * (mouth_left + mouth_right)
+
+        inter_eye = float(np.linalg.norm(right_eye - left_eye))
+        if inter_eye < 6.0:
+            return False
+
+        patch_half = int(max(6.0, min(0.18 * inter_eye, 0.14 * min(crop.shape[:2]))))
+        feature_points = (left_eye, right_eye, nose, mouth_mid)
+        passed_patches = 0
+
+        for point in feature_points:
+            patch = self.extract_gray_patch(gray, point, patch_half, x1, y1)
+            if patch is None:
+                continue
+            patch_std = float(np.std(patch))
+            patch_lap_var = float(cv2.Laplacian(patch, cv2.CV_32F).var())
+            if (
+                patch_std >= self.id_quality_min_patch_stddev
+                and patch_lap_var >= self.id_quality_min_patch_laplacian_var
+            ):
+                passed_patches += 1
+
+        min_passes = int(np.ceil(len(feature_points) * self.id_quality_min_pass_ratio))
+        return passed_patches >= min_passes
+
+    def extract_gray_patch(
+        self,
+        gray: np.ndarray,
+        point: np.ndarray,
+        half_size: int,
+        offset_x: int,
+        offset_y: int,
+    ) -> Optional[np.ndarray]:
+        local_x = int(round(float(point[0]))) - offset_x
+        local_y = int(round(float(point[1]))) - offset_y
+        h, w = gray.shape[:2]
+        x1 = max(0, local_x - half_size)
+        y1 = max(0, local_y - half_size)
+        x2 = min(w, local_x + half_size + 1)
+        y2 = min(h, local_y + half_size + 1)
+        if (x2 - x1) < max(4, half_size) or (y2 - y1) < max(4, half_size):
+            return None
+        return gray[y1:y2, x1:x2]
 
     def draw_tracked_debug(self, image: np.ndarray, face_id: str, score: float, box, keypoints: Optional[np.ndarray]):
         x1, y1, x2, y2 = box
@@ -501,7 +828,7 @@ class Ros4HriFaceNode(Node):
         out.header = header
         out.header.frame_id = self.frame_id
         out.ids = face_ids
-        self.pub_tracked.publish(out)
+        self.safe_publish(self.pub_tracked, out)
 
     def publish_roi(self, header, face_id, x1, y1, x2, y2, w, h):
         roi = NormalizedRegionOfInterest2D()
@@ -512,13 +839,15 @@ class Ros4HriFaceNode(Node):
         roi.xmax = float(x2) / float(w)
         roi.ymax = float(y2) / float(h)
         roi.c = 1.0
-        self.per_face_roi_pubs[face_id].publish(roi)
+        publisher = self.per_face_roi_pubs.get(face_id)
+        if publisher is not None:
+            self.safe_publish(publisher, roi)
 
     def publish_image(self, header, publisher, image_bgr: np.ndarray):
         out = self.bridge.cv2_to_imgmsg(image_bgr, encoding='bgr8')
         out.header = header
         out.header.frame_id = self.frame_id
-        publisher.publish(out)
+        self.safe_publish(publisher, out)
 
     def estimate_mouth_opening(
         self,
@@ -711,7 +1040,9 @@ class Ros4HriFaceNode(Node):
             put_mouth(mouth_left, mouth_right, mouth_center, mouth_height, conf=0.7)
             put(8, cx, cy + fh * 0.34)
 
-        self.per_face_landmarks_pubs[face_id].publish(lm)
+        publisher = self.per_face_landmarks_pubs.get(face_id)
+        if publisher is not None:
+            self.safe_publish(publisher, lm)
 
     def compute_debug_landmark_points(
         self,
@@ -816,6 +1147,8 @@ class Ros4HriFaceNode(Node):
         bbox_xyxy: Tuple[int, int, int, int],
         keypoints: Optional[np.ndarray],
     ):
+        if not self.ros_interfaces_active():
+            return
         if self.camera_matrix is None:
             if not self.warned_missing_camera_info:
                 self.get_logger().warning(
@@ -899,7 +1232,10 @@ class Ros4HriFaceNode(Node):
         face_tf.transform.rotation.y = float(current_quaternion[1])
         face_tf.transform.rotation.z = float(current_quaternion[2])
         face_tf.transform.rotation.w = float(current_quaternion[3])
-        self.tf_broadcaster.sendTransform(face_tf)
+        try:
+            self.tf_broadcaster.sendTransform(face_tf)
+        except Exception:
+            return
 
         gx, gy, gz, gw = self.gaze_frame_rotation
         gaze_tf = TransformStamped()
@@ -913,7 +1249,10 @@ class Ros4HriFaceNode(Node):
         gaze_tf.transform.rotation.y = float(gy)
         gaze_tf.transform.rotation.z = float(gz)
         gaze_tf.transform.rotation.w = float(gw)
-        self.tf_broadcaster.sendTransform(gaze_tf)
+        try:
+            self.tf_broadcaster.sendTransform(gaze_tf)
+        except Exception:
+            return
 
     def align_face(self, frame_bgr: np.ndarray, kps: np.ndarray, size: int = 128) -> np.ndarray:
         dst = np.array(
@@ -967,7 +1306,7 @@ class Ros4HriFaceNode(Node):
         out.header.frame_id = self.frame_id
         out.format = 'jpeg'
         out.data = enc.tobytes()
-        self.pub_debug.publish(out)
+        self.safe_publish(self.pub_debug, out)
 
     def log_tracker_events(self):
         interesting = []
@@ -996,36 +1335,83 @@ class Ros4HriFaceNode(Node):
         n_tracks: int,
         n_dets: int,
         decode_ms: float,
+        resize_color_ms: float,
+        tensor_pack_ms: float,
+        h2d_ms: float,
+        infer_enqueue_ms: float,
+        dtoh_sync_ms: float,
         detect_ms: float,
         track_ms: float,
         publish_ms: float,
         debug_ms: float,
+        ran_detector: bool,
     ):
         self.frame_count += 1
         self.stage_totals['decode_ms'] += decode_ms
+        self.stage_totals['resize_color_ms'] += resize_color_ms
+        self.stage_totals['tensor_pack_ms'] += tensor_pack_ms
+        self.stage_totals['h2d_ms'] += h2d_ms
+        self.stage_totals['infer_enqueue_ms'] += infer_enqueue_ms
+        self.stage_totals['dtoh_sync_ms'] += dtoh_sync_ms
         self.stage_totals['detect_ms'] += detect_ms
         self.stage_totals['track_ms'] += track_ms
         self.stage_totals['publish_ms'] += publish_ms
         self.stage_totals['debug_ms'] += debug_ms
+        self.stage_max['decode_ms'] = max(self.stage_max['decode_ms'], decode_ms)
+        self.stage_max['resize_color_ms'] = max(self.stage_max['resize_color_ms'], resize_color_ms)
+        self.stage_max['tensor_pack_ms'] = max(self.stage_max['tensor_pack_ms'], tensor_pack_ms)
+        self.stage_max['h2d_ms'] = max(self.stage_max['h2d_ms'], h2d_ms)
+        self.stage_max['infer_enqueue_ms'] = max(self.stage_max['infer_enqueue_ms'], infer_enqueue_ms)
+        self.stage_max['dtoh_sync_ms'] = max(self.stage_max['dtoh_sync_ms'], dtoh_sync_ms)
+        self.stage_max['detect_ms'] = max(self.stage_max['detect_ms'], detect_ms)
+        self.stage_max['track_ms'] = max(self.stage_max['track_ms'], track_ms)
+        self.stage_max['publish_ms'] = max(self.stage_max['publish_ms'], publish_ms)
+        self.stage_max['debug_ms'] = max(self.stage_max['debug_ms'], debug_ms)
         now = time.time()
         dt = now - self.last_log_time
         if dt >= 1.0:
             fps = self.frame_count / dt
             if self.performance_debug:
                 avg_decode_ms = self.stage_totals['decode_ms'] / self.frame_count
+                avg_resize_color_ms = self.stage_totals['resize_color_ms'] / self.frame_count
+                avg_tensor_pack_ms = self.stage_totals['tensor_pack_ms'] / self.frame_count
+                avg_h2d_ms = self.stage_totals['h2d_ms'] / self.frame_count
+                avg_infer_enqueue_ms = self.stage_totals['infer_enqueue_ms'] / self.frame_count
+                avg_dtoh_sync_ms = self.stage_totals['dtoh_sync_ms'] / self.frame_count
                 avg_detect_ms = self.stage_totals['detect_ms'] / self.frame_count
                 avg_track_ms = self.stage_totals['track_ms'] / self.frame_count
                 avg_publish_ms = self.stage_totals['publish_ms'] / self.frame_count
                 avg_debug_ms = self.stage_totals['debug_ms'] / self.frame_count
                 self.get_logger().info(
                     f'SCRFD ROS4HRI: {fps:.2f} FPS | detections={n_dets} | published_tracks={n_tracks} '
-                    f'| decode={avg_decode_ms:.1f}ms detect={avg_detect_ms:.1f}ms '
-                    f'track={avg_track_ms:.1f}ms publish={avg_publish_ms:.1f}ms debug={avg_debug_ms:.1f}ms'
+                    f'| recv={self.received_frames} dropped={self.dropped_frames} detector={int(ran_detector)} '
+                    f'| decode={avg_decode_ms:.1f}ms resize_color={avg_resize_color_ms:.1f}ms '
+                    f'tensor_pack={avg_tensor_pack_ms:.1f}ms '
+                    f'h2d={avg_h2d_ms:.1f}ms enqueue={avg_infer_enqueue_ms:.1f}ms dtoh={avg_dtoh_sync_ms:.1f}ms '
+                    f'detect={avg_detect_ms:.1f}ms track={avg_track_ms:.1f}ms '
+                    f'publish={avg_publish_ms:.1f}ms debug={avg_debug_ms:.1f}ms '
+                    f'| pmax decode={self.stage_max["decode_ms"]:.1f}ms '
+                    f'resize_color={self.stage_max["resize_color_ms"]:.1f}ms '
+                    f'tensor_pack={self.stage_max["tensor_pack_ms"]:.1f}ms '
+                    f'detect={self.stage_max["detect_ms"]:.1f}ms'
                 )
             self.frame_count = 0
             self.last_log_time = now
+            self.received_frames = 0
+            self.dropped_frames = 0
             for key in self.stage_totals:
                 self.stage_totals[key] = 0.0
+                self.stage_max[key] = 0.0
+
+    def destroy_node(self):
+        self.shutdown_started = True
+        self.stop_event.set()
+        self.latest_frame_event.set()
+        if hasattr(self, 'worker_thread') and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=1.0)
+        if hasattr(self, 'decoder'):
+            self.decoder.close()
+        super().destroy_node()
 
 
 def main(args=None):
@@ -1035,6 +1421,15 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except ExternalShutdownException:
+        pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass

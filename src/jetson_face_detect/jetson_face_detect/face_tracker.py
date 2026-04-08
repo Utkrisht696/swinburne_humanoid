@@ -264,3 +264,38 @@ class SimpleFaceTracker:
         ]
         active.sort(key=lambda t: t.track_id)
         return active
+
+    def predict_only(self) -> List[Track]:
+        self.last_debug_events = []
+        to_delete = []
+        for track_id, track in self.tracks.items():
+            track.bbox_xyxy = self.predict_bbox(track)
+            track.age += 1
+            track.missed += 1
+            if self.debug:
+                self.last_debug_events.append(
+                    TrackerDebugEvent(
+                        event_type="missed",
+                        track_id=track_id,
+                        missed=track.missed,
+                    )
+                )
+            if track.missed > self.max_missed:
+                to_delete.append(track_id)
+
+        for track_id in to_delete:
+            if self.debug:
+                self.last_debug_events.append(
+                    TrackerDebugEvent(
+                        event_type="deleted",
+                        track_id=track_id,
+                    )
+                )
+            del self.tracks[track_id]
+
+        active = [
+            t for t in self.tracks.values()
+            if t.hits >= self.min_hits and t.missed <= self.max_missed
+        ]
+        active.sort(key=lambda t: t.track_id)
+        return active

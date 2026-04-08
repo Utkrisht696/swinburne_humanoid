@@ -67,6 +67,7 @@ class PersonEngagement(object):
                  node: Node,
                  person: Person,
                  reference_frame: str,
+                 reference_frame_is_optical: bool,
                  max_distance: float,
                  field_of_view_rad: float,
                  engagement_threshold: float,
@@ -79,6 +80,7 @@ class PersonEngagement(object):
         self.person = person
 
         self.reference_frame = reference_frame
+        self.reference_frame_is_optical = reference_frame_is_optical
         self.max_distance = max_distance
         self.field_of_view_rad = field_of_view_rad
         self.engagement_threshold = engagement_threshold
@@ -239,9 +241,14 @@ class PersonEngagement(object):
 
         # gaze_BA measures how 'close' A is from the optical axis of B
         t_ba = person_from_robot.transform.translation
-        xa = t_ba.x
-        ya = t_ba.y
-        za = t_ba.z
+        if self.reference_frame_is_optical:
+            xa = t_ba.z
+            ya = t_ba.x
+            za = t_ba.y
+        else:
+            xa = t_ba.x
+            ya = t_ba.y
+            za = t_ba.z
 
         gaze_ba = 0.0
         log_d_ab = 0.0
@@ -402,6 +409,12 @@ class EngagementNode(Node):
                             'Use to compute mutual gaze between the robot and the people.'))
 
         self.declare_parameter(
+            'reference_frame_is_optical', False, ParameterDescriptor(
+                description='Whether the configured reference frame uses optical camera axes '
+                            '(+Z forward, +X right, +Y down) instead of robot/body axes '
+                            '(+X forward, +Y left, +Z up).'))
+
+        self.declare_parameter(
             'engagement_threshold', 0.5, ParameterDescriptor(
                 description='Threshold to start considering someone as "engaging". '
                             'Higher values will make the engagement status more conservative.'))
@@ -421,11 +434,17 @@ class EngagementNode(Node):
 
         self.max_distance = self.get_parameter('max_distance').value
         self.reference_frame = self.get_parameter('reference_frame').value
+        self.reference_frame_is_optical = self.get_parameter('reference_frame_is_optical').value
         self.field_of_view_rad = self.get_parameter('field_of_view').value * math.pi / 180
         self.engagement_threshold = self.get_parameter('engagement_threshold').value
         self.observation_window = self.get_parameter('observation_window').value
         self.rate = self.get_parameter('rate').value
         self.use_sim_time = self.get_parameter('use_sim_time').value
+
+        self.get_logger().info(
+            f'Configured engagement reference_frame={self.reference_frame} '
+            f'(optical={self.reference_frame_is_optical})'
+        )
 
         self.get_logger().info('State: Inactive.')
         return super().on_configure(state)
@@ -517,6 +536,7 @@ class EngagementNode(Node):
                     self,
                     person_instance,
                     self.reference_frame,
+                    self.reference_frame_is_optical,
                     self.max_distance,
                     self.field_of_view_rad,
                     self.engagement_threshold,
