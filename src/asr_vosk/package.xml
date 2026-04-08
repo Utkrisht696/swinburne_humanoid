@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>asr_vosk</name>
+  <version>2.5.1</version>
+  <description>The asr_vosk package</description>
+  <maintainer email="severin.lemaignan@pal-robotics.com">Séverin Lemaignan</maintainer>
+  <license>Apache License 2.0</license>
+  <author email="severin.lemaignan@pal-robotics.com">Séverin Lemaignan</author>
+  <author email="sara.cooper@pal-robotics.com">Sara Cooper</author>
+  <author email="luka.juricic@pal-robotics.com">Luka Juricic</author>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>audio_common_msgs</exec_depend>
+  <exec_depend>diagnostic_aggregator</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>hri_actions_msgs</exec_depend>
+  <exec_depend>hri_msgs</exec_depend>
+  <exec_depend>i18n_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_pal</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>vosk</exec_depend>
+  <exec_depend>hri_voice_face_matcher</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>audio_common_msgs</test_depend>
+  <test_depend>pyhri</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>rosbag2_py</test_depend>
+  <test_depend>rosbag2_storage_default_plugins</test_depend>
+  <test_depend>rosgraph_msgs</test_depend>
+  <test_depend>std_msgs</test_depend>
+  <test_depend>asr_vosk_language_model_en_us_small</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+    <pip_requirements>requirements.txt</pip_requirements>
+  </export>
+</package>

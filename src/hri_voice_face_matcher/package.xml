@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>hri_voice_face_matcher</name>
+  <version>0.1.0</version>
+  <description>Voice to face/person association for ROS4HRI</description>
+  <maintainer email="agi@example.com">AGI</maintainer>
+  <license>Apache License 2.0</license>
+
+  <exec_depend>hri_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>pyhri</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

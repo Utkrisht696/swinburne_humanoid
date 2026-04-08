@@ -1,0 +1,6 @@
+---
+# A list of locale, using the ISO 639-1 2 letters language code, followed by
+# an hyphen, followed by the ISO 3166-1 2 letter region.
+#
+# For instance: en_GB, fr_FR, ca_ES
+string[] locales

@@ -1,0 +1,19 @@
+# The desired locale, using the ISO 639-1 2 letters language code, followed by
+# an hyphen, followed by the ISO 3166-1 2 letter region.
+#
+# For instance: en_GB, fr_FR, ca_ES
+string locale
+---
+# If false, `msg` should contain an error message
+bool ok
+string error_msg
+---
+# The `progress` feedback string is expected to be a JSON string
+# reporting how the change of locale is progressing.
+# The possible values are not limited.
+#
+# For example:
+# {"rasa": "loading model",
+#  "tts": "complete",
+#  "vosk": "complete"}
+string progress

@@ -1,0 +1,2 @@
+asr_vosk:
+  launch: "asr_vosk asr_vosk.launch.py"

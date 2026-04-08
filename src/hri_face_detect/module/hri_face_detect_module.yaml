@@ -1,0 +1,2 @@
+hri_face_detect:
+  launch: "hri_face_detect face_detect.launch.py"

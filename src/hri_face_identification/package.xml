@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>hri_face_identification</name>
+  <version>2.7.0</version>
+  <description>hri_face_identification is a ROS4HRI-compatible package for face identification</description>
+  <maintainer email="severin.lemaignan@pal-robotics.com">Séverin Lemaignan</maintainer>
+  <license>Apache License 2.0</license>
+  <author email="severin.lemaignan@pal-robotics.com">Séverin Lemaignan</author>
+  <author email="luka.juricic@pal-robotics.com">Luka Juricic</author>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <build_depend>diagnostic_updater</build_depend>
+  <build_depend>fmt</build_depend>
+  <build_depend>image_transport</build_depend>
+  <build_depend>libblas-dev</build_depend>
+  <build_depend>libtclap-dev</build_depend>
+  <build_depend>liblapack-dev</build_depend>
+  <build_depend>libsqlite3-dev</build_depend>
+  <build_depend>lifecycle_msgs</build_depend>
+  <build_depend>nlohmann-json-dev</build_depend>
+  <build_depend condition="$PAL_DISTRO != ''">pal_module_cmake</build_depend>
+
+  <exec_depend>diagnostic_aggregator</exec_depend>
+  <exec_depend>diagnostic_updater</exec_depend>
+  <exec_depend>fmt</exec_depend>
+  <exec_depend>image_transport</exec_depend>
+  <exec_depend>launch_pal</exec_depend>
+  <exec_depend>libblas-dev</exec_depend>
+  <exec_depend>libtclap-dev</exec_depend>
+  <exec_depend>liblapack-dev</exec_depend>
+  <exec_depend>libsqlite3-dev</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>nlohmann-json-dev</exec_depend>
+
+  <depend>ament_index_cpp</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>hri</depend>
+  <depend>hri_msgs</depend>
+  <depend>hri_privacy_msgs</depend>
+  <depend>libdlib-dev</depend>
+  <depend>libopencv-dev</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+
+  <test_depend>ament_index_cpp</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>libopencv-dev</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+
+  <export>
+      <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,2 @@
+hri_face_body_matcher:
+  launch: "hri_face_body_matcher hri_face_body_matcher.launch.py"

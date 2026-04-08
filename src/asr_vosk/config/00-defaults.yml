@@ -1,0 +1,8 @@
+/asr_vosk:
+  ros__parameters:
+    # Device sampling rate
+    audio_rate: 16000
+    # Model family name
+    model: vosk_model_small
+    # Default locale
+    default_locale: en_US

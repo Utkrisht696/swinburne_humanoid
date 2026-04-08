@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>asr_vosk_language_model_en_us_gigaspeech</name>
+  <version>0.1.0</version>
+  <description>
+    Ament package containing the Vosk American English GigaSpeech model.
+    Upstream model: vosk-model-en-us-0.42-gigaspeech.zip
+  </description>
+  <maintainer email="agi@example.com">AGI</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

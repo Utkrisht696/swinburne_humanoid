@@ -1,0 +1,3 @@
+name: 'vosk_model_small'
+locale: 'en_US'
+path: 'model'

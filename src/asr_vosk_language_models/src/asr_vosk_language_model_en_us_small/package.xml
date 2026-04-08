@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>asr_vosk_language_model_en_us_small</name>
+  <version>2.2.0</version>
+  <description>
+    This package contains the pre-trained VOSK and SpaCy language models for American English (small model).
+    Upstream model: vosk-model-small-en-us-0.15.zip
+  </description>
+  <maintainer email="severin.lemaignan@pal-robotics.com">Séverin Lemaignan</maintainer>
+  <author email="severin.lemaignan@pal-robotics.com">Séverin Lemaignan</author>
+  <author email="luka.juricic@pal-robotics.com">Luka Juricic</author>
+  <license>Apache 2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+
+</package>

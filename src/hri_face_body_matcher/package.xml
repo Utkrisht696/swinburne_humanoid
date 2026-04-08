@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>hri_face_body_matcher</name>
+  <version>2.1.2</version>
+  <description>The hri_face_body_matcher package</description>
+  <maintainer email="luka.juricic@pal-robotics.com">Luka Juricic</maintainer>
+  <license>Apache License 2.0</license>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <build_depend>diagnostic_updater</build_depend>
+  <build_depend>hri_msgs</build_depend>
+  <build_depend>libblas-dev</build_depend>
+  <build_depend>libdlib-dev</build_depend>
+  <build_depend>liblapack-dev</build_depend>
+  <build_depend>libopencv-dev</build_depend>
+  <build_depend>libsqlite3-dev</build_depend>
+  <build_depend>lifecycle_msgs</build_depend>
+  <build_depend condition="$PAL_DISTRO != ''">pal_module_cmake</build_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>diagnostic_aggregator</exec_depend>
+  <exec_depend>diagnostic_updater</exec_depend>
+  <exec_depend>hri_msgs</exec_depend>
+  <exec_depend>libblas-dev</exec_depend>
+  <exec_depend>libdlib-dev</exec_depend>
+  <exec_depend>liblapack-dev</exec_depend>
+  <exec_depend>libopencv-dev</exec_depend>
+  <exec_depend>libsqlite3-dev</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+
+  <depend>diagnostic_msgs</depend>
+  <depend>hri</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gmock</test_depend>
+  <test_depend>hri_msgs</test_depend>
+  <test_depend>lifecycle_msgs</test_depend>
+  <test_depend>rcl_interfaces</test_depend>
+  <test_depend>rclpy</test_depend>
+  <test_depend>rosgraph_msgs</test_depend>
+
+  <export>
+      <build_type>ament_cmake</build_type>
+  </export>
+</package>

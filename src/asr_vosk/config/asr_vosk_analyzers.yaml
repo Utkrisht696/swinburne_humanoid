@@ -1,0 +1,11 @@
+/asr_vosk/add_analyzer_node:
+  ros__parameters:
+    path: Diagnostics
+    communication:
+      type: 'diagnostic_aggregator/AnalyzerGroup'
+      path: Communication
+      analyzers:
+        asr:
+          type: diagnostic_aggregator/GenericAnalyzer
+          path: "Speech recognition"
+          find_and_remove_prefix: ["/communication/asr"]

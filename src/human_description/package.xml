@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>human_description</name>
+  <version>2.0.2</version>
+    <description>
+        This package contains a parametric kinematic description of humans. 
+        The files in this package are parsed and used by a variety of other 
+        components, notably in the context of human-robot interaction.
+        Most users will not interact directly with this package.
+    </description>
+  <maintainer email="severin.lemaignan@pal-robotics.com">Séverin Lemaignan</maintainer>
+  <author>Séverin Lemaignan</author>
+  <license>Apache License 2.0</license>
+
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>launch_pal</exec_depend>
+  <exec_depend>launch_param_builder</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
+  <test_depend>urdf_test</test_depend>
+  <test_depend>robot_state_publisher</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

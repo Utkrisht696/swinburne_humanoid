@@ -1,0 +1,3 @@
+name: 'vosk_model_gigaspeech'
+locale: 'en_US'
+path: 'model'
