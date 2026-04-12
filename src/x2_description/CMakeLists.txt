@@ -28,4 +28,9 @@ install(
         DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+        PROGRAMS scripts/base_footprint_projector.py
+        DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()
